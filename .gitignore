@@ -1,0 +1,11 @@
+# Build artifacts
+/target
+
+# Local whisper models and audio scratch files
+/models
+*.wav
+
+# AI assistant local data (settings, memory, prompts) — never publish
+.claude/
+CLAUDE.md
+CLAUDE.local.md

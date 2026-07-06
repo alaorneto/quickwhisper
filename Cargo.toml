@@ -1,0 +1,27 @@
+[package]
+name = "quickwhisper"
+version = "0.1.0"
+edition = "2026"
+description = "Push-to-talk voice transcription for GNOME/Wayland"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive"] }
+cpal = "0.18.1"
+directories = "6.0.0"
+evdev = "0.13.2"
+hound = "3.5.1"
+notify-rust = "4.18.0"
+rubato = "0.16"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ureq = "3.3.0"
+whisper-rs = { version = "0.16.0", features = ["tracing_backend"] }
+wl-clipboard-rs = "0.9.3"
+
+[profile.release]
+# whisper inference is the hot path; LTO buys measurable speedup there.
+lto = "thin"

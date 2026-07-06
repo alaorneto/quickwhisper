@@ -1,0 +1,21 @@
+# systemd user unit — install with:
+#   mkdir -p ~/.config/systemd/user
+#   cp data/quickwhisper.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quickwhisper
+[Unit]
+Description=QuickWhisper push-to-talk transcription daemon
+# Clipboard and notifications need the Wayland session up.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/quickwhisper daemon
+Restart=on-failure
+RestartSec=3
+# whisper inference is CPU-heavy but should not starve the desktop.
+Nice=5
+
+[Install]
+WantedBy=graphical-session.target
