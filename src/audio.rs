@@ -16,6 +16,9 @@ pub struct Recording {
     pub samples: Vec<f32>,
 }
 
+/// Called with the normalized (0.0–1.0) microphone level, ~15 Hz.
+pub type LevelCallback = Box<dyn Fn(f32) + Send>;
+
 /// A microphone capture in progress on a dedicated thread.
 ///
 /// cpal streams are !Send, so the stream lives and dies inside the thread;
@@ -32,6 +35,7 @@ impl Recorder {
         device_name: &str,
         max: Duration,
         on_auto_stop: Option<Box<dyn FnOnce() + Send>>,
+        on_level: Option<LevelCallback>,
     ) -> Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
@@ -40,7 +44,9 @@ impl Recorder {
 
         let handle = std::thread::Builder::new()
             .name("audio-capture".into())
-            .spawn(move || capture_thread(&device_name, max, thread_stop, on_auto_stop, ready_tx))
+            .spawn(move || {
+                capture_thread(&device_name, max, thread_stop, on_auto_stop, on_level, ready_tx)
+            })
             .context("criando thread de captura")?;
 
         // Surface device/stream errors to the caller instead of only at stop():
@@ -64,6 +70,7 @@ fn capture_thread(
     max: Duration,
     stop: Arc<AtomicBool>,
     on_auto_stop: Option<Box<dyn FnOnce() + Send>>,
+    on_level: Option<LevelCallback>,
     ready_tx: std::sync::mpsc::Sender<Result<()>>,
 ) -> Result<Recording> {
     type CaptureParts = (cpal::Stream, u32, usize, Arc<Mutex<Vec<f32>>>);
@@ -145,12 +152,32 @@ fn capture_thread(
 
     let started = Instant::now();
     let mut timed_out = false;
+    let mut last_len = 0usize;
+    let mut ticks = 0u32;
     while !stop.load(Ordering::Relaxed) {
         if started.elapsed() >= max {
             timed_out = true;
             break;
         }
         std::thread::sleep(Duration::from_millis(30));
+        ticks += 1;
+        // Feed the overlay waveform with the RMS of freshly captured samples
+        // (~every 60 ms); done here, in the control loop, to keep the
+        // realtime cpal callback free of extra work.
+        if let Some(cb) = &on_level {
+            if ticks.is_multiple_of(2) {
+                let buf = buffer.lock().expect("audio mutex");
+                let new = &buf[last_len.min(buf.len())..];
+                if !new.is_empty() {
+                    let rms =
+                        (new.iter().map(|s| s * s).sum::<f32>() / new.len() as f32).sqrt();
+                    last_len = buf.len();
+                    drop(buf);
+                    // Speech RMS is typically 0.03–0.3; scale into 0..1.
+                    cb((rms * 5.0).min(1.0));
+                }
+            }
+        }
     }
     drop(stream);
     if timed_out {

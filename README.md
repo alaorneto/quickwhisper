@@ -4,11 +4,11 @@
 release — your words are transcribed locally by [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
 and land in your clipboard, ready to paste. No cloud, no audio ever leaving your machine.
 
-> **Status:** early but functional (phase 2). Hotkey → record → transcribe → clipboard +
-> desktop notification works end to end, with a local transcription history you can
-> browse from the CLI. You can chain dictations without waiting: a new recording starts
-> instantly even while the previous one is still transcribing. Planned next: an animated
-> recording overlay and automatic paste into the focused text field — see [Roadmap](#roadmap).
+> **Status:** functional (phase 3). Hold the key and a pill overlay with a
+> voice-reactive waveform appears at the bottom of the screen; release, and when
+> transcription finishes the text is pasted into the focused field and copied to the
+> clipboard. Chained dictations are supported. Without the GNOME extension, it degrades
+> gracefully to clipboard + notifications. See [Roadmap](#roadmap).
 
 ## How it works
 
@@ -25,7 +25,14 @@ hold F12 ──▶ record mic (PipeWire) ──▶ release ──▶ whisper.cpp
 - Transcription runs fully offline with [whisper-rs](https://github.com/tazz4843/whisper-rs)
   (whisper.cpp bindings). The model stays resident in memory, so each dictation
   only pays inference time (~0.3× real time for the `small` model on a modern CPU).
-- The result is copied to the Wayland clipboard and shown in a desktop notification.
+- The result is copied to the Wayland clipboard; with the companion GNOME Shell
+  extension it is also **pasted into the focused text field** automatically.
+- The extension renders the recording overlay: a pill at the bottom of the screen
+  with a purple→orange waveform that reacts to your voice (daemon streams the mic
+  RMS over D-Bus), turning into a traveling shimmer while whisper processes.
+  It honors the system's reduced-motion (animations) setting.
+- Daemon and extension talk over the session D-Bus (`io.github.alaor.QuickWhisper`);
+  without the extension, the daemon falls back to desktop notifications.
 
 ### Why evdev for the hotkey?
 
@@ -70,6 +77,18 @@ quickwhisper daemon
 ```
 
 Hold **F12**, speak, release. A notification shows the transcription; `Ctrl+V` pastes it.
+
+### GNOME Shell extension (overlay + auto-paste)
+
+```bash
+ln -sfn "$PWD/extension/quickwhisper@alaor.github.io" \
+    ~/.local/share/gnome-shell/extensions/quickwhisper@alaor.github.io
+gnome-extensions enable quickwhisper@alaor.github.io
+```
+
+Log out and back in (Wayland cannot reload the Shell in place) — the pill overlay
+and automatic paste become active. Note: synthetic `Ctrl+V` pastes into most apps;
+terminals typically use `Ctrl+Shift+V`, so there the text stays in the clipboard.
 
 ### Run as a service (starts with your session)
 
@@ -139,9 +158,9 @@ are discarded immediately.
 Detailed architecture and phased plan live in [PLAN.md](PLAN.md) (in Portuguese):
 
 - ~~**Phase 2** — transcription history: SQLite store + `history` CLI~~ ✔ done
-- **Phase 3** — GNOME Shell extension: animated recording pill overlay (purple→orange
-  waveform), automatic paste into the focused field via `Clutter.VirtualInputDevice`
-- **Phase 4** — RPM packaging, multi-monitor overlay, polish
+- ~~**Phase 3** — GNOME Shell extension: animated recording pill overlay, automatic
+  paste into the focused field via `Clutter.VirtualInputDevice`~~ ✔ done
+- **Phase 4** — RPM packaging, multi-monitor overlay, cancel gesture, polish
 
 ## License
 

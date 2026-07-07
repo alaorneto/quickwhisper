@@ -2,6 +2,7 @@ mod audio;
 mod clipboard;
 mod config;
 mod daemon;
+mod dbus;
 mod history;
 mod hotkey;
 mod models;
@@ -253,7 +254,8 @@ fn cmd_record(cfg: &config::Config, secs: u64, out: &std::path::Path) -> Result<
     use std::time::Duration;
 
     println!("Gravando {secs}s do dispositivo '{}'…", cfg.audio.device);
-    let recorder = audio::Recorder::start(&cfg.audio.device, Duration::from_secs(secs), None)?;
+    let recorder =
+        audio::Recorder::start(&cfg.audio.device, Duration::from_secs(secs), None, None)?;
     std::thread::sleep(Duration::from_secs(secs));
     let recording = recorder.stop()?;
 

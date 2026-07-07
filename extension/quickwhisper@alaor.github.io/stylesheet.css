@@ -1,0 +1,21 @@
+.qw-pill {
+    background-color: rgba(18, 14, 26, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 26px;
+    padding: 10px 18px;
+    spacing: 12px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+.qw-icon {
+    icon-size: 16px;
+    color: #b794f6;
+}
+
+.qw-bars {
+    spacing: 3px;
+}
+
+.qw-bar {
+    border-radius: 2px;
+}

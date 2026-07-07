@@ -1457,6 +1457,7 @@ dependencies = [
  "ureq",
  "whisper-rs",
  "wl-clipboard-rs",
+ "zbus",
 ]
 
 [[package]]

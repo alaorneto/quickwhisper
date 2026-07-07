@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ureq = "3.3.0"
 whisper-rs = { version = "0.16.0", features = ["tracing_backend"] }
 wl-clipboard-rs = "0.9.3"
+zbus = "5.16"
 
 [profile.release]
 # whisper inference is the hot path; LTO buys measurable speedup there.

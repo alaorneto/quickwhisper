@@ -1,6 +1,6 @@
 # QuickWhisper — Plano de Arquitetura e Implementação
 
-> **Status:** Fases 0–2 implementadas (núcleo headless + histórico/CLI). Fases 3–4 pendentes.
+> **Status:** Fases 0–3 implementadas (núcleo + histórico + extensão overlay/auto-paste). Fase 4 pendente.
 > **Data:** 2026-07-06
 > **Alvo:** Rocky Linux 10.x · GNOME 49 · Wayland · Rust
 
@@ -49,6 +49,21 @@
   feita pelo próprio SQLite (`strftime(..., 'localtime')`) — zero dependência de crate de data.
 - Atenção: `edition` do Cargo.toml deve permanecer `2021` (uma edição "2026" não existe no
   Rust estável e quebra todos os comandos cargo).
+
+**Descobertas da Fase 3 (2026-07-07):**
+
+- **Spike B validado no GNOME 49** via shell aninhado (`dbus-run-session -- gnome-shell
+  --nested --wayland`): extensão ACTIVE, ciclo completo de sinais simulado por `busctl emit`
+  sem exceções JS — incluindo `addTopChrome` (pílula) e `Clutter.VirtualInputDevice` (Ctrl+V).
+  O shell aninhado é o caminho de teste sem relogar; a sessão real exige logout/login.
+- D-Bus server no daemon: zbus 5 **blocking** (`zbus::blocking::connection::Builder` +
+  `#[zbus::interface]`), sem runtime async; sinais emitidos com `zbus::block_on`. Interface
+  conforme §5; presença da extensão detectada por `NameHasOwner` a cada ditado.
+- Notificação só é exibida quando a extensão está ausente; com overlay presente, o feedback é
+  visual + auto-paste. `Finished` só é emitido após clipboard OK (evita colar conteúdo velho).
+- Ordem com ditados encadeados: a extensão só esconde a pílula em `Finished/Failed/Cancelled`
+  se estiver em `processing` — se já houver nova gravação em curso, a pílula permanece.
+- Extensão instalada por symlink do repo (dev); `enabled-extensions` já persistido no dconf.
 
 ## 1. O que é
 
