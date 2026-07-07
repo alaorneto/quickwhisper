@@ -1,17 +1,19 @@
 //! The push-to-talk daemon: a small synchronous state machine.
 //!
-//! Phase 1 deliberately avoids async — hotkeys arrive on an mpsc channel from
-//! evdev threads, audio capture runs on its own thread, and whisper blocks the
-//! loop on purpose (presses during processing are stale and get drained).
+//! No async runtime — hotkeys arrive on an mpsc channel from evdev threads and
+//! audio capture runs on its own thread. Whisper runs on a dedicated worker
+//! with a queue, so a new dictation can start recording immediately even while
+//! the previous one is still being transcribed (a real usage pattern: people
+//! chain sentences faster than whisper processes them).
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tracing::{error, info, warn};
 
 use crate::config::{Config, HotkeyMode};
-use crate::{audio, clipboard, hotkey, models, transcribe};
+use crate::{audio, clipboard, history, hotkey, models, transcribe};
 
 /// Recordings shorter than this are treated as accidental taps and discarded.
 const MIN_RECORDING: Duration = Duration::from_millis(300);
@@ -28,6 +30,20 @@ pub fn run(cfg: Config) -> Result<()> {
     // Loading takes seconds; do it once at startup and keep it resident so a
     // dictation only pays inference time.
     let transcriber = transcribe::Transcriber::load(&model_path)?;
+    let history = history::History::open()?;
+
+    // Transcription worker: whisper runs are serialized here, off the main
+    // loop, so hotkey events keep flowing while a dictation is processed.
+    let (work_tx, work_rx) = mpsc::channel::<audio::Recording>();
+    let worker_cfg = cfg.clone();
+    std::thread::Builder::new()
+        .name("transcribe-worker".into())
+        .spawn(move || {
+            for recording in work_rx {
+                process_recording(&transcriber, &history, &worker_cfg, recording);
+            }
+        })
+        .expect("criando thread do worker de transcrição");
 
     let key = hotkey::parse_key(&cfg.hotkey.key)?;
     let (tx, rx) = mpsc::channel::<Event>();
@@ -93,8 +109,12 @@ pub fn run(cfg: Config) -> Result<()> {
                     drop(recording);
                 }
                 Ok(recording) => {
-                    process_recording(&transcriber, &cfg, recording);
-                    drain_stale_keys(&rx);
+                    let secs = recording.samples.len() as f64 / audio::WHISPER_SAMPLE_RATE as f64;
+                    info!("gravação de {secs:.1}s enfileirada para transcrição");
+                    if work_tx.send(recording).is_err() {
+                        error!("worker de transcrição morreu; encerrando");
+                        break;
+                    }
                 }
                 Err(e) => {
                     error!("falha na captura: {e:#}");
@@ -106,7 +126,12 @@ pub fn run(cfg: Config) -> Result<()> {
     Ok(())
 }
 
-fn process_recording(transcriber: &transcribe::Transcriber, cfg: &Config, rec: audio::Recording) {
+fn process_recording(
+    transcriber: &transcribe::Transcriber,
+    history: &history::History,
+    cfg: &Config,
+    rec: audio::Recording,
+) {
     let secs = rec.samples.len() as f64 / audio::WHISPER_SAMPLE_RATE as f64;
     info!("transcrevendo {secs:.1}s de áudio…");
     let t0 = Instant::now();
@@ -121,6 +146,18 @@ fn process_recording(transcriber: &transcribe::Transcriber, cfg: &Config, rec: a
                 result.language.as_deref().map(|l| format!(" [{l}]")).unwrap_or_default(),
                 result.text
             );
+            // The language column records what was actually used: the fixed
+            // config value, or whatever whisper detected under "auto".
+            let lang = if cfg.whisper.language == "auto" {
+                result.language.as_deref()
+            } else {
+                Some(cfg.whisper.language.as_str())
+            };
+            let duration_ms = (secs * 1000.0) as i64;
+            if let Err(e) = history.insert(&result.text, duration_ms, lang, &cfg.whisper.model) {
+                // History is a convenience; a write failure must not break dictation.
+                warn!("falha ao gravar histórico: {e:#}");
+            }
             match clipboard::set_text(&result.text) {
                 Ok(()) => notify("Transcrito e copiado 📋", &result.text),
                 Err(e) => {
@@ -133,18 +170,6 @@ fn process_recording(transcriber: &transcribe::Transcriber, cfg: &Config, rec: a
             error!("whisper falhou: {e:#}");
             notify("QuickWhisper — erro na transcrição", &format!("{e:#}"));
         }
-    }
-}
-
-/// Discards key events that queued up while whisper was running so a press
-/// made during processing doesn't spuriously start a new recording.
-fn drain_stale_keys(rx: &Receiver<Event>) {
-    let mut n = 0;
-    while rx.try_recv().is_ok() {
-        n += 1;
-    }
-    if n > 0 {
-        warn!("{n} evento(s) de tecla ignorado(s) durante o processamento");
     }
 }
 

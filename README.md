@@ -4,10 +4,11 @@
 release — your words are transcribed locally by [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
 and land in your clipboard, ready to paste. No cloud, no audio ever leaving your machine.
 
-> **Status:** early but functional (phase 1). Hotkey → record → transcribe → clipboard +
-> desktop notification works end to end. Planned next: transcription history CLI, an
-> animated recording overlay, and automatic paste into the focused text field — see
-> [Roadmap](#roadmap).
+> **Status:** early but functional (phase 2). Hotkey → record → transcribe → clipboard +
+> desktop notification works end to end, with a local transcription history you can
+> browse from the CLI. You can chain dictations without waiting: a new recording starts
+> instantly even while the previous one is still transcribing. Planned next: an animated
+> recording overlay and automatic paste into the focused text field — see [Roadmap](#roadmap).
 
 ## How it works
 
@@ -91,6 +92,11 @@ journalctl --user -u quickwhisper -f     # logs
 | `quickwhisper config set <key> <value>` | Change a value (e.g. `config set language auto`) |
 | `quickwhisper model download <name>` | Download a ggml model (`tiny`…`large-v3`) |
 | `quickwhisper model list` | List downloaded models |
+| `quickwhisper history list [--limit N] [--json]` | Past transcriptions, newest first |
+| `quickwhisper history show <id>` | Full text of one transcription |
+| `quickwhisper history copy <id>` | Copy a past transcription to the clipboard |
+| `quickwhisper history delete <id>…` | Delete transcriptions |
+| `quickwhisper history clear [--yes]` | Delete the whole history |
 | `quickwhisper record --secs N` | Microphone test (writes a WAV) |
 | `quickwhisper hotkey-test` | Show press/release events for the configured key |
 | `quickwhisper transcribe <file.wav>` | Transcribe a WAV file and report timing |
@@ -121,8 +127,9 @@ noticeably less accurate.
 ## Privacy
 
 Everything runs locally: audio is captured to memory, transcribed on your CPU, and
-discarded. Nothing is uploaded, logged, or persisted (until the opt-in history feature
-lands — which will also be local, in SQLite).
+discarded — only the resulting *text* is kept, in a local SQLite history
+(`~/.local/share/quickwhisper/history.db`) that you can inspect and prune with
+`quickwhisper history`. Nothing is ever uploaded.
 
 The daemon reads input devices only to detect the configured key; all other key events
 are discarded immediately.
@@ -131,7 +138,7 @@ are discarded immediately.
 
 Detailed architecture and phased plan live in [PLAN.md](PLAN.md) (in Portuguese):
 
-- **Phase 2** — transcription history: SQLite store + `history list/copy/delete` CLI
+- ~~**Phase 2** — transcription history: SQLite store + `history` CLI~~ ✔ done
 - **Phase 3** — GNOME Shell extension: animated recording pill overlay (purple→orange
   waveform), automatic paste into the focused field via `Clutter.VirtualInputDevice`
 - **Phase 4** — RPM packaging, multi-monitor overlay, polish

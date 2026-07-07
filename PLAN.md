@@ -1,6 +1,6 @@
 # QuickWhisper — Plano de Arquitetura e Implementação
 
-> **Status:** Fases 0–1 implementadas (núcleo headless). Fases 2–4 pendentes.
+> **Status:** Fases 0–2 implementadas (núcleo headless + histórico/CLI). Fases 3–4 pendentes.
 > **Data:** 2026-07-06
 > **Alvo:** Rocky Linux 10.x · GNOME 49 · Wayland · Rust
 
@@ -34,6 +34,21 @@
   O fallback é automático e sticky. Na Fase 3, preferir setar o clipboard pela extensão
   (`St.Clipboard`), que roda dentro do Shell.
 - Logs do whisper.cpp roteados para `tracing` (feature `tracing_backend` do whisper-rs).
+
+**Descobertas da Fase 2 (2026-07-06):**
+
+- **Ditados emendados eram perdidos:** com a máquina de estados bloqueando no whisper, um
+  F12 pressionado durante o processamento era descartado em silêncio (aconteceu em teste
+  real). Correção: **worker de transcrição com fila** (thread + mpsc) — gravação nova pode
+  começar imediatamente enquanto a anterior transcreve. O `drain_stale_keys` foi removido.
+- **wl-copy pode travar** disputando a seleção com um wl-copy antigo ainda servindo o
+  clipboard (observado uma vez; não determinístico). O `child.wait()` sem limite congelava o
+  worker para sempre. Correção: espera com timeout de 3s + kill; perder uma cópia é melhor
+  que perder o daemon (o texto sobrevive na notificação e no histórico).
+- Histórico SQLite (rusqlite bundled): timestamps UTC no banco, conversão para hora local
+  feita pelo próprio SQLite (`strftime(..., 'localtime')`) — zero dependência de crate de data.
+- Atenção: `edition` do Cargo.toml deve permanecer `2021` (uma edição "2026" não existe no
+  Rust estável e quebra todos os comandos cargo).
 
 ## 1. O que é
 

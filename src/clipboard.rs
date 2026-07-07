@@ -30,6 +30,23 @@ pub fn set_text(text: &str) -> Result<()> {
     }
 }
 
+/// Clipboard for one-shot CLI commands: unlike the daemon, this process exits
+/// right away, so whoever serves the selection must outlive us. Both paths
+/// handle that — wl-clipboard-rs forks a serving child by default, and
+/// `wl-copy` daemonizes itself.
+pub fn set_text_oneshot(text: &str) -> Result<()> {
+    use wl_clipboard_rs::copy::{MimeType, Options, Source};
+
+    let result = Options::new().copy(Source::Bytes(text.as_bytes().into()), MimeType::Text);
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            debug!("wl-clipboard-rs indisponível ({e:#}); usando wl-copy");
+            copy_via_wl_copy(text)
+        }
+    }
+}
+
 fn copy_via_lib(text: &str) -> Result<()> {
     use wl_clipboard_rs::copy::{MimeType, Options, Source};
 
@@ -52,6 +69,7 @@ fn copy_via_lib(text: &str) -> Result<()> {
 }
 
 fn copy_via_wl_copy(text: &str) -> Result<()> {
+    debug!("wl-copy: iniciando");
     let mut child = Command::new("wl-copy")
         .stdin(Stdio::piped())
         .spawn()
@@ -61,7 +79,23 @@ fn copy_via_wl_copy(text: &str) -> Result<()> {
         .take()
         .context("stdin do wl-copy indisponível")?
         .write_all(text.as_bytes())?;
-    let status = child.wait()?;
+    debug!("wl-copy: aguardando término");
+    // Never wait unbounded: a wl-copy wedged in a clipboard-ownership dispute
+    // once froze the transcription worker for good. Better to lose one copy
+    // (the user still gets the text via notification/history) than the daemon.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().ok();
+            child.wait().ok();
+            anyhow::bail!("wl-copy não respondeu em 3s; texto pode não ter ido ao clipboard");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    debug!("wl-copy: terminou ({status})");
     anyhow::ensure!(status.success(), "wl-copy saiu com {status}");
     Ok(())
 }

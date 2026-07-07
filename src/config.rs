@@ -167,6 +167,10 @@ pub fn models_dir() -> Result<PathBuf> {
     Ok(project_dirs()?.data_dir().join("models"))
 }
 
+pub fn history_db_path() -> Result<PathBuf> {
+    Ok(project_dirs()?.data_dir().join("history.db"))
+}
+
 fn project_dirs() -> Result<directories::ProjectDirs> {
     directories::ProjectDirs::from("", "", "quickwhisper")
         .context("não foi possível resolver os diretórios do usuário (HOME ausente?)")

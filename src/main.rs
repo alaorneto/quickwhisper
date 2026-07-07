@@ -2,6 +2,7 @@ mod audio;
 mod clipboard;
 mod config;
 mod daemon;
+mod history;
 mod hotkey;
 mod models;
 mod transcribe;
@@ -52,6 +53,39 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    /// Browse past transcriptions (list, show, copy, delete)
+    History {
+        #[command(subcommand)]
+        command: HistoryCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HistoryCommand {
+    /// List transcriptions, newest first
+    List {
+        /// Maximum entries to show
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Full entries as JSON (timestamps in UTC ISO 8601)
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the full text of one transcription
+    Show { id: i64 },
+    /// Copy a transcription back to the clipboard
+    Copy { id: i64 },
+    /// Delete one or more transcriptions
+    Delete {
+        #[arg(required = true)]
+        ids: Vec<i64>,
+    },
+    /// Delete the whole history
+    Clear {
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -106,7 +140,70 @@ fn main() -> Result<()> {
         Command::HotkeyTest => cmd_hotkey_test(&cfg),
         Command::Status => cmd_status(&cfg),
         Command::Config { command } => cmd_config(cfg, command),
+        Command::History { command } => cmd_history(command),
     }
+}
+
+fn cmd_history(command: HistoryCommand) -> Result<()> {
+    let history = history::History::open()?;
+    match command {
+        HistoryCommand::List { limit, json } => {
+            let entries = history.list(limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("Histórico vazio — dite algo com o daemon rodando.");
+            } else {
+                for e in &entries {
+                    println!(
+                        "{:>4}  {}  {:>4}  {}",
+                        e.id,
+                        e.created_at_local,
+                        e.lang.as_deref().unwrap_or("?"),
+                        preview(&e.text, 60)
+                    );
+                }
+            }
+        }
+        HistoryCommand::Show { id } => println!("{}", history.get(id)?.text),
+        HistoryCommand::Copy { id } => {
+            let entry = history.get(id)?;
+            clipboard::set_text_oneshot(&entry.text)?;
+            println!("Copiado para o clipboard: {}", preview(&entry.text, 60));
+        }
+        HistoryCommand::Delete { ids } => {
+            let deleted = history.delete(&ids)?;
+            println!("{deleted} transcrição(ões) apagada(s)");
+        }
+        HistoryCommand::Clear { yes } => {
+            let count = history.count()?;
+            if count == 0 {
+                println!("Histórico já está vazio.");
+                return Ok(());
+            }
+            if !yes {
+                eprint!("Apagar todas as {count} transcrições? [s/N] ");
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if !matches!(answer.trim().to_lowercase().as_str(), "s" | "sim" | "y" | "yes") {
+                    println!("Cancelado.");
+                    return Ok(());
+                }
+            }
+            println!("{} transcrição(ões) apagada(s)", history.clear()?);
+        }
+    }
+    Ok(())
+}
+
+/// First line of `text`, truncated to `max` characters (UTF-8 safe).
+fn preview(text: &str, max: usize) -> String {
+    let line = text.lines().next().unwrap_or("");
+    let mut out: String = line.chars().take(max).collect();
+    if line.chars().count() > max || text.lines().count() > 1 {
+        out.push('…');
+    }
+    out
 }
 
 fn cmd_config(mut cfg: config::Config, command: ConfigCommand) -> Result<()> {
