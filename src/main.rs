@@ -261,12 +261,19 @@ fn cmd_record(cfg: &config::Config, secs: u64, out: &std::path::Path) -> Result<
     let recording = recorder.stop()?;
 
     let peak = recording.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let quality = if peak >= 0.99 {
+        "(⚠ áudio estourado? reduza o ganho do microfone)"
+    } else if peak < 0.01 {
+        "(⚠ silêncio? verifique o microfone)"
+    } else {
+        "(ok)"
+    };
     audio::write_wav(out, &recording.samples)?;
     println!(
         "Gravado {:.1}s · pico de amplitude {:.3} {} · salvo em {}",
         recording.samples.len() as f64 / 16_000.0,
         peak,
-        if peak < 0.01 { "(⚠ silêncio? verifique o microfone)" } else { "(ok)" },
+        quality,
         out.display()
     );
     Ok(())
