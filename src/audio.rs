@@ -187,14 +187,16 @@ fn capture_thread(
     }
 
     let raw = std::mem::take(&mut *buffer.lock().expect("audio mutex"));
-    let mono = mix_to_mono(&raw, channels);
+    let mono = mix_to_mono(raw, channels);
     let samples = resample(mono, sample_rate, WHISPER_SAMPLE_RATE)?;
     Ok(Recording { samples })
 }
 
-fn mix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
+/// Takes ownership so the (common) mono case is a pass-through, not a copy of
+/// the whole recording.
+fn mix_to_mono(interleaved: Vec<f32>, channels: usize) -> Vec<f32> {
     if channels <= 1 {
-        return interleaved.to_vec();
+        return interleaved;
     }
     interleaved
         .chunks_exact(channels)
@@ -247,7 +249,7 @@ pub fn load_wav_as_whisper_input(path: &Path) -> Result<Vec<f32>> {
                 .collect::<Result<_, _>>()?
         }
     };
-    let mono = mix_to_mono(&raw, spec.channels as usize);
+    let mono = mix_to_mono(raw, spec.channels as usize);
     resample(mono, spec.sample_rate, WHISPER_SAMPLE_RATE)
 }
 

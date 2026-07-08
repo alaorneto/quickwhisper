@@ -1,7 +1,8 @@
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use tracing::info;
 
 use crate::config;
 
@@ -21,6 +22,17 @@ pub fn require(name: &str) -> Result<PathBuf> {
         );
     }
     Ok(path)
+}
+
+/// Returns the model path, downloading it first if missing — lets the daemon
+/// come up ready on a fresh install, with no manual bootstrap step.
+pub fn ensure(name: &str) -> Result<PathBuf> {
+    let path = model_path(name)?;
+    if path.exists() {
+        return Ok(path);
+    }
+    info!("modelo '{name}' ausente; baixando (centenas de MB, pode demorar)…");
+    download(name)
 }
 
 pub fn list() -> Result<()> {
@@ -72,6 +84,9 @@ pub fn download(name: &str) -> Result<PathBuf> {
     let mut buf = [0u8; 1024 * 128];
     let mut done: u64 = 0;
     let mut last_pct: u64 = u64::MAX;
+    // `\r` progress only makes sense on a real terminal; under systemd it
+    // would flood the journal with partial lines.
+    let show_progress = std::io::stderr().is_terminal();
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
@@ -79,7 +94,7 @@ pub fn download(name: &str) -> Result<PathBuf> {
         }
         file.write_all(&buf[..n])?;
         done += n as u64;
-        if let Some(total) = total {
+        if let (true, Some(total)) = (show_progress, total) {
             let pct = done * 100 / total;
             if pct != last_pct {
                 eprint!("\r{pct}% ({} / {} MB)", done / 1_048_576, total / 1_048_576);
@@ -87,7 +102,9 @@ pub fn download(name: &str) -> Result<PathBuf> {
             }
         }
     }
-    eprintln!();
+    if show_progress {
+        eprintln!();
+    }
     file.flush()?;
     drop(file);
     std::fs::rename(&tmp, &path)?;

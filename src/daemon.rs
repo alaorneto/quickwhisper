@@ -17,7 +17,7 @@ use crate::dbus::DbusHandle;
 use crate::{audio, clipboard, history, hotkey, models, transcribe};
 
 /// Recordings shorter than this are treated as accidental taps and discarded.
-const MIN_RECORDING: Duration = Duration::from_millis(300);
+const MIN_RECORDING: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 enum Event {
@@ -29,7 +29,8 @@ enum Event {
 }
 
 pub fn run(cfg: Config) -> Result<()> {
-    let model_path = models::require(&cfg.whisper.model)?;
+    // First run on a fresh install: fetch the configured model automatically.
+    let model_path = models::ensure(&cfg.whisper.model)?;
     // Loading takes seconds; do it once at startup and keep it resident so a
     // dictation only pays inference time.
     let transcriber = transcribe::Transcriber::load(&model_path)?;
@@ -42,6 +43,11 @@ pub fn run(cfg: Config) -> Result<()> {
     // the daemon works fine without it (headless fallback).
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
     let dbus = DbusHandle::start(cancel_tx);
+    // Fresh installs ship the extension present but never enabled; asking the
+    // Shell here makes overlay + auto-paste work with zero manual steps.
+    if !dbus.overlay_present() {
+        dbus.enable_extension();
+    }
     let cancel_bridge = tx.clone();
     std::thread::spawn(move || {
         for () in cancel_rx {

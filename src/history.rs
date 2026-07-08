@@ -4,8 +4,8 @@
 //! Timestamps are stored in UTC (ISO 8601); display conversion to local time
 //! is done by SQLite itself, so no date/time crate is needed.
 
-use anyhow::{bail, Context, Result};
-use rusqlite::Connection;
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -24,6 +24,25 @@ pub struct Entry {
 
 pub struct History {
     conn: Connection,
+}
+
+/// Shared SELECT prefix so every query maps rows through [`row_to_entry`]
+/// with the same column order.
+const SELECT_ENTRY: &str = "SELECT id, created_at,
+        strftime('%Y-%m-%d %H:%M:%S', created_at, 'localtime'),
+        text, duration_ms, lang, model
+ FROM transcriptions";
+
+fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
+    Ok(Entry {
+        id: row.get(0)?,
+        created_at: row.get(1)?,
+        created_at_local: row.get(2)?,
+        text: row.get(3)?,
+        duration_ms: row.get(4)?,
+        lang: row.get(5)?,
+        model: row.get(6)?,
+    })
 }
 
 impl History {
@@ -71,48 +90,18 @@ impl History {
 
     /// Newest first.
     pub fn list(&self, limit: usize) -> Result<Vec<Entry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, created_at,
-                    strftime('%Y-%m-%d %H:%M:%S', created_at, 'localtime'),
-                    text, duration_ms, lang, model
-             FROM transcriptions ORDER BY id DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([limit as i64], |row| {
-            Ok(Entry {
-                id: row.get(0)?,
-                created_at: row.get(1)?,
-                created_at_local: row.get(2)?,
-                text: row.get(3)?,
-                duration_ms: row.get(4)?,
-                lang: row.get(5)?,
-                model: row.get(6)?,
-            })
-        })?;
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{SELECT_ENTRY} ORDER BY id DESC LIMIT ?1"))?;
+        let rows = stmt.query_map([limit as i64], row_to_entry)?;
         rows.collect::<Result<_, _>>().context("lendo histórico")
     }
 
     pub fn get(&self, id: i64) -> Result<Entry> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, created_at,
-                    strftime('%Y-%m-%d %H:%M:%S', created_at, 'localtime'),
-                    text, duration_ms, lang, model
-             FROM transcriptions WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map([id], |row| {
-            Ok(Entry {
-                id: row.get(0)?,
-                created_at: row.get(1)?,
-                created_at_local: row.get(2)?,
-                text: row.get(3)?,
-                duration_ms: row.get(4)?,
-                lang: row.get(5)?,
-                model: row.get(6)?,
-            })
-        })?;
-        match rows.next() {
-            Some(entry) => Ok(entry?),
-            None => bail!("transcrição {id} não existe (veja: quickwhisper history list)"),
-        }
+        self.conn
+            .query_row(&format!("{SELECT_ENTRY} WHERE id = ?1"), [id], row_to_entry)
+            .optional()?
+            .with_context(|| format!("transcrição {id} não existe (veja: quickwhisper history list)"))
     }
 
     /// Returns how many rows were actually deleted.

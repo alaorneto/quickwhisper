@@ -34,9 +34,19 @@ export default class QuickWhisperExtension extends Extension {
         this._signalId = Gio.DBus.session.signal_subscribe(
             null, BUS_NAME, null, OBJECT_PATH, null,
             Gio.DBusSignalFlags.NONE, (...args) => this._onSignal(...args));
+
+        // If the daemon crashes mid-dictation no terminal signal ever comes;
+        // dismiss the pill as soon as its bus name vanishes.
+        this._watchId = Gio.bus_watch_name(
+            Gio.BusType.SESSION, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
+            null, () => this._overlay?.hideNow());
     }
 
     disable() {
+        if (this._watchId) {
+            Gio.bus_unwatch_name(this._watchId);
+            this._watchId = 0;
+        }
         if (this._signalId) {
             Gio.DBus.session.signal_unsubscribe(this._signalId);
             this._signalId = 0;
@@ -71,7 +81,9 @@ export default class QuickWhisperExtension extends Extension {
             break;
         case 'Failed':
         case 'Cancelled':
-            this._overlay.finishIfProcessing();
+            // These can terminate a live recording (quick tap, D-Bus cancel),
+            // when the overlay is still in 'recording' — dismiss from any state.
+            this._overlay.dismiss();
             break;
         }
     }

@@ -148,7 +148,7 @@ Processo residente (systemd user service + autostart). Responsabilidades:
        └──────────────────── [Finishing: salva histórico → clipboard → paste → sinal Finished]
 ```
 
-Regras de borda (ver §7): gravação < 300 ms é descartada; press durante `Processing` é ignorado
+Regras de borda (ver §7): gravação < 1 s é descartada; press durante `Processing` é ignorado
 com feedback visual; transcrição vazia não cola nada nem entra no histórico.
 
 ### 3.2 Pipeline de áudio
@@ -169,7 +169,7 @@ com feedback visual; transcrição vazia não cola nada nem entra no histórico.
 
 ### 3.4 Extensão GNOME Shell (overlay + paste)
 
-Extensão GJS mínima, instalada em `~/.local/share/gnome-shell/extensions/quickwhisper@alaor.github.io`.
+Extensão GJS mínima, instalada em `~/.local/share/gnome-shell/extensions/quickwhisper@alaorneto.github.io`.
 
 - Conecta aos sinais D-Bus do daemon.
 - **Overlay:** `St.Widget` adicionado via `Main.layoutManager.addTopChrome()` — mesma técnica dos OSDs nativos. Posição: bottom-center, **monitor onde está o ponteiro** (config futura: todos os monitores).
@@ -354,7 +354,7 @@ detectar se o overlay/paste está disponível e decidir o fallback.
 
 | Caso | Comportamento |
 |---|---|
-| Gravação < 300 ms (toque acidental) | Descartar; overlay some com fade rápido; nada no histórico |
+| Gravação < 1 s (toque acidental) | Descartar; overlay some com fade rápido; nada no histórico |
 | Transcrição vazia/só silêncio | Não colar, não copiar, não salvar; overlay some; log em debug |
 | F12 pressionado durante Processing | Ignorar; pílula pisca levemente indicando "ocupado" |
 | Modelo ausente | Notificação com instrução `quickwhisper model download small`; daemon segue vivo |

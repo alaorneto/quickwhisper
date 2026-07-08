@@ -9,7 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use zbus::blocking::connection;
 use zbus::object_server::SignalEmitter;
 
@@ -17,6 +17,8 @@ pub const BUS_NAME: &str = "io.github.alaor.QuickWhisper";
 pub const OBJECT_PATH: &str = "/io/github/alaor/QuickWhisper";
 /// Exported by the extension; its presence means overlay + auto-paste work.
 pub const OVERLAY_BUS_NAME: &str = "io.github.alaor.QuickWhisper.Overlay";
+/// UUID of the companion GNOME Shell extension.
+pub const EXTENSION_UUID: &str = "quickwhisper@alaorneto.github.io";
 
 struct QuickWhisperIface {
     state: Arc<Mutex<String>>,
@@ -143,6 +145,26 @@ impl DbusHandle {
         self.set_state("idle");
         if let Some(s) = &self.0 {
             self.emit("Cancelled", QuickWhisperIface::cancelled(&s.emitter));
+        }
+    }
+
+    /// Asks GNOME Shell to enable the companion extension. Idempotent; covers
+    /// fresh installs where the extension files exist but nobody enabled it.
+    pub fn enable_extension(&self) {
+        let Some(s) = &self.0 else { return };
+        let call = || -> Result<bool> {
+            let proxy = zbus::blocking::Proxy::new(
+                &s.conn,
+                "org.gnome.Shell.Extensions",
+                "/org/gnome/Shell/Extensions",
+                "org.gnome.Shell.Extensions",
+            )?;
+            Ok(proxy.call("EnableExtension", &(EXTENSION_UUID,))?)
+        };
+        match call() {
+            Ok(true) => info!("extensão {EXTENSION_UUID} habilitada no GNOME Shell"),
+            Ok(false) => debug!("GNOME Shell recusou habilitar {EXTENSION_UUID} (não instalada?)"),
+            Err(e) => debug!("EnableExtension indisponível (sessão sem GNOME Shell?): {e:#}"),
         }
     }
 

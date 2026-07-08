@@ -45,10 +45,16 @@ export class Overlay {
         });
         this._pill.add_child(this._icon);
 
+        // Fixed height (bars at max) so the pill never resizes while the
+        // waveform animates; x-centered so the dots fill the pill symmetrically
+        // when the icon is hidden during processing.
         this._barsBox = new St.BoxLayout({
             style_class: 'qw-bars',
             y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
         });
+        this._barsBox.set_height(BAR_MAX);
         this._bars = [];
         for (let i = 0; i < N_BARS; i++) {
             const bar = new St.Widget({
@@ -91,10 +97,28 @@ export class Overlay {
             monitor.y + monitor.height - natH - MARGIN_BOTTOM);
     }
 
+    // Locks the pill to its natural size (icon visible, bars at max height) so
+    // no state change — waveform, hidden icon — ever alters its geometry.
+    _lockSize() {
+        if (this._sizeLocked)
+            return;
+        // The pill has never been painted at this point, so the stylesheet
+        // (padding, spacing, border) may not be applied yet; measuring without
+        // it locks the pill too narrow and the waveform spills past its right
+        // edge. Force style resolution before measuring.
+        this._pill.ensure_style();
+        const [, natW] = this._pill.get_preferred_width(-1);
+        const [, natH] = this._pill.get_preferred_height(-1);
+        this._pill.set_size(natW, natH);
+        this._sizeLocked = true;
+    }
+
     showRecording() {
         this._state = 'recording';
         this._level = 0;
         this._target = 0;
+        this._icon.show();
+        this._lockSize();
         this._pill.remove_all_transitions();
         this._pill.show();
         this._place();
@@ -125,6 +149,8 @@ export class Overlay {
         if (this._state === 'hidden')
             return;
         this._state = 'processing';
+        // Processing: no mic icon, just the dots filling the (fixed) pill.
+        this._icon.hide();
         if (!this._animationsEnabled()) {
             this._bars.forEach(b => {
                 b.height = BAR_MIN;
@@ -133,10 +159,18 @@ export class Overlay {
         }
     }
 
-    // A dictation reached a terminal state (Finished/Failed/Cancelled). Only
-    // dismiss when we're not already showing a newer, chained recording.
+    // A dictation Finished. Only dismiss when we're not already showing a
+    // newer, chained recording.
     finishIfProcessing() {
         if (this._state !== 'processing')
+            return;
+        this.dismiss();
+    }
+
+    // Fade the pill out from any state — used for Failed/Cancelled, which can
+    // arrive while still 'recording' (quick tap discarded by the daemon).
+    dismiss() {
+        if (this._state === 'hidden')
             return;
         this._state = 'hidden';
         if (this._animationsEnabled()) {
@@ -153,6 +187,15 @@ export class Overlay {
         } else {
             this._pill.hide();
         }
+    }
+
+    // Immediate dismissal, no fade — used when the daemon vanishes from the
+    // bus mid-dictation and no terminal signal will ever arrive.
+    hideNow() {
+        this._state = 'hidden';
+        this._stopTick();
+        this._pill.remove_all_transitions();
+        this._pill.hide();
     }
 
     _startTick() {

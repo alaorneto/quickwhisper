@@ -28,14 +28,14 @@ pub fn parse_key(name: &str) -> Result<KeyCode> {
 }
 
 /// Counts keyboards we can open that have the key — used by `status`.
-pub fn accessible_devices(key: KeyCode) -> Result<usize> {
-    Ok(keyboards_with_key(key)?.len())
+pub fn accessible_devices(key: KeyCode) -> usize {
+    keyboards_with_key(key).len()
 }
 
 /// Spawns one reader thread per keyboard that has the key; press/release
 /// events for `key` are forwarded to `tx`. Returns the device count.
 pub fn spawn_listeners(key: KeyCode, tx: Sender<HotkeyEvent>) -> Result<usize> {
-    let devices = keyboards_with_key(key)?;
+    let devices = keyboards_with_key(key);
     if devices.is_empty() {
         bail!(
             "nenhum teclado acessível com a tecla {key:?}.\n\
@@ -56,18 +56,12 @@ pub fn spawn_listeners(key: KeyCode, tx: Sender<HotkeyEvent>) -> Result<usize> {
     Ok(count)
 }
 
-fn keyboards_with_key(key: KeyCode) -> Result<Vec<(std::path::PathBuf, Device)>> {
-    let mut found = Vec::new();
-    for (path, device) in evdev::enumerate() {
-        let has_key = device
-            .supported_keys()
-            .map(|keys| keys.contains(key))
-            .unwrap_or(false);
-        if has_key {
-            found.push((path, device));
-        }
-    }
-    Ok(found)
+fn keyboards_with_key(key: KeyCode) -> Vec<(std::path::PathBuf, Device)> {
+    evdev::enumerate()
+        .filter(|(_, device)| {
+            device.supported_keys().is_some_and(|keys| keys.contains(key))
+        })
+        .collect()
 }
 
 fn read_loop(mut device: Device, key: KeyCode, tx: Sender<HotkeyEvent>) {

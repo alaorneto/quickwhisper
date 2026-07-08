@@ -1,0 +1,2 @@
+# Enable the QuickWhisper daemon for every user session by default.
+enable quickwhisper.service

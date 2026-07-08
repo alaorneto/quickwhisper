@@ -33,6 +33,9 @@ hold F12 ──▶ record mic (PipeWire) ──▶ release ──▶ whisper.cpp
   It honors the system's reduced-motion (animations) setting.
 - Daemon and extension talk over the session D-Bus (`io.github.alaor.QuickWhisper`);
   without the extension, the daemon falls back to desktop notifications.
+- On startup the daemon downloads the configured whisper model if missing and asks
+  GNOME Shell to enable the companion extension, so a fresh install needs no manual
+  bootstrap.
 
 ### Why evdev for the hotkey?
 
@@ -61,13 +64,46 @@ sudo dnf install -y cmake clang clang-devel gcc-c++ alsa-lib-devel
 
 ## Installation
 
+### RPM (recommended on Fedora/RHEL/Rocky)
+
+```bash
+sudo dnf install -y rpm-build cmake clang clang-devel gcc-c++ alsa-lib-devel
+git clone <repo-url> && cd quickwhisper
+./packaging/build-rpm.sh
+sudo dnf install target/rpmbuild/RPMS/x86_64/quickwhisper-*.rpm
+```
+
+The package installs the binary, the GNOME Shell extension (system-wide) and a
+systemd **user** service enabled for every account via preset. The post-install
+script starts the daemon immediately for logged-in users; on its first start the
+daemon downloads the whisper model (~466 MB for `small`) and enables the Shell
+extension by itself.
+
+Two things still need one action from you:
+
+```bash
+sudo usermod -aG input $USER   # allow reading the push-to-talk key
+```
+
+then **log out and back in** — this applies the `input` group and lets GNOME Shell
+load the freshly installed extension (Wayland cannot reload the Shell in place).
+After that, hold **F12**, speak, release: the recording pill appears and the text is
+pasted into the focused field. Note: synthetic `Ctrl+V` pastes into most apps;
+terminals typically use `Ctrl+Shift+V`, so there the text stays in the clipboard.
+
+**Updating:** pull the new code, re-run `./packaging/build-rpm.sh`, then
+`sudo dnf upgrade target/rpmbuild/RPMS/x86_64/quickwhisper-*.rpm`. The daemon is
+restarted automatically; if the update touches the GNOME Shell extension, log out
+and back in for it to take effect.
+
+### From source
+
 ```bash
 git clone <repo-url> && cd quickwhisper
 cargo install --path .
 
-# One-time setup:
 sudo usermod -aG input $USER          # allow reading the push-to-talk key (re-login required)
-quickwhisper model download small     # ~466 MB, stored in ~/.local/share/quickwhisper/models
+quickwhisper model download small     # optional: the daemon also fetches it on first start
 ```
 
 Log out and back in (for the `input` group), then:
@@ -78,26 +114,24 @@ quickwhisper daemon
 
 Hold **F12**, speak, release. A notification shows the transcription; `Ctrl+V` pastes it.
 
-### GNOME Shell extension (overlay + auto-paste)
+#### GNOME Shell extension (overlay + auto-paste)
 
 ```bash
-ln -sfn "$PWD/extension/quickwhisper@alaor.github.io" \
-    ~/.local/share/gnome-shell/extensions/quickwhisper@alaor.github.io
-gnome-extensions enable quickwhisper@alaor.github.io
+ln -sfn "$PWD/extension/quickwhisper@alaorneto.github.io" \
+    ~/.local/share/gnome-shell/extensions/quickwhisper@alaorneto.github.io
+gnome-extensions enable quickwhisper@alaorneto.github.io
 ```
 
-Log out and back in (Wayland cannot reload the Shell in place) — the pill overlay
-and automatic paste become active. Note: synthetic `Ctrl+V` pastes into most apps;
-terminals typically use `Ctrl+Shift+V`, so there the text stays in the clipboard.
+Log out and back in — the pill overlay and automatic paste become active.
 
-### Run as a service (starts with your session)
+#### Run as a service (starts with your session)
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp data/quickwhisper.service ~/.config/systemd/user/
+sudo install -Dm644 data/quickwhisper.service /etc/systemd/user/quickwhisper.service
+systemctl --user edit quickwhisper        # override ExecStart with your binary path
 systemctl --user daemon-reload
 systemctl --user enable --now quickwhisper
-journalctl --user -u quickwhisper -f     # logs
+journalctl --user -u quickwhisper -f      # logs
 ```
 
 ## CLI reference
@@ -160,7 +194,7 @@ Detailed architecture and phased plan live in [PLAN.md](PLAN.md) (in Portuguese)
 - ~~**Phase 2** — transcription history: SQLite store + `history` CLI~~ ✔ done
 - ~~**Phase 3** — GNOME Shell extension: animated recording pill overlay, automatic
   paste into the focused field via `Clutter.VirtualInputDevice`~~ ✔ done
-- **Phase 4** — RPM packaging, multi-monitor overlay, cancel gesture, polish
+- **Phase 4** — ~~RPM packaging~~ ✔, multi-monitor overlay, cancel gesture, polish
 
 ## License
 

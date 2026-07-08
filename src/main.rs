@@ -199,9 +199,10 @@ fn cmd_history(command: HistoryCommand) -> Result<()> {
 
 /// First line of `text`, truncated to `max` characters (UTF-8 safe).
 fn preview(text: &str, max: usize) -> String {
-    let line = text.lines().next().unwrap_or("");
-    let mut out: String = line.chars().take(max).collect();
-    if line.chars().count() > max || text.lines().count() > 1 {
+    let mut lines = text.lines();
+    let mut chars = lines.next().unwrap_or("").chars();
+    let mut out: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() || lines.next().is_some() {
         out.push('…');
     }
     out
@@ -309,7 +310,7 @@ fn cmd_status(cfg: &config::Config) -> Result<()> {
         "wayland: {}",
         std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "AUSENTE (sessão não-Wayland?)".into())
     );
-    match hotkey::parse_key(&cfg.hotkey.key).and_then(hotkey::accessible_devices) {
+    match hotkey::parse_key(&cfg.hotkey.key).map(hotkey::accessible_devices) {
         Ok(n) if n > 0 => println!("evdev  : {n} teclado(s) com acesso ✓"),
         Ok(_) => println!("evdev  : nenhum dispositivo acessível — você está no grupo 'input'?"),
         Err(e) => println!("evdev  : {e}"),
