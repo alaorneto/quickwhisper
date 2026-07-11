@@ -15,7 +15,7 @@
 
 Name:           quickwhisper
 Version:        0.1.0
-Release:        3%{?dist}
+Release:        4%{?dist}
 Summary:        Push-to-talk voice transcription for GNOME/Wayland
 License:        MIT
 URL:            https://github.com/alaorneto/quickwhisper
@@ -94,6 +94,15 @@ fi
 %{_datadir}/gnome-shell/extensions/%{extension_uuid}/
 
 %changelog
+* Sat Jul 11 2026 Alaor Barroso de Carvalho Neto <alaorneto@gmail.com> - 0.1.0-4
+- Overlay: rebuild the pill with fully deterministic geometry — all sizes and
+  positions computed in JS (scaled by the UI scale factor), stylesheet is
+  paint-only, and the wave box clips to its allocation. Fixes the waveform
+  rendering larger than the pill for good (the previous measure-and-lock
+  approach depended on style-resolution timing).
+- Overlay: show a rotating spinner in the mic icon's slot while transcribing,
+  instead of leaving the space empty.
+
 * Wed Jul 08 2026 Alaor Barroso de Carvalho Neto <alaorneto@gmail.com> - 0.1.0-3
 - Overlay: fix pill locked narrower than the waveform (style was measured
   before the stylesheet applied), letting the bars spill past its right edge.

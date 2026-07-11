@@ -1,23 +1,17 @@
-/* The pill's height is fixed by overlay.js: 26px content (bars at max) +
-   2×10px padding + 2×1px border = 48px. Keep border-radius at exactly half
-   that (24px) — St renders a broken, shapeless background when the radius
-   exceeds half the box height. */
+/* Paint only — all geometry (sizes, positions, padding, spacing) is fixed
+   in overlay.js, so the wave can never outgrow the pill regardless of when
+   this stylesheet is resolved. The pill is 237×48 logical px; keep
+   border-radius at exactly half the height (24px) — St renders a broken,
+   shapeless background when the radius exceeds half the box height. */
 .qw-pill {
     background-color: rgba(16, 13, 24, 0.92);
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 24px;
-    padding: 10px 20px;
-    spacing: 14px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
 }
 
 .qw-icon {
-    icon-size: 16px;
     color: #c4b5fd;
-}
-
-.qw-bars {
-    spacing: 3px;
 }
 
 .qw-bar {
