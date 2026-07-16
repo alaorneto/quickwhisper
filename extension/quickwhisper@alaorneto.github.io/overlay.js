@@ -91,8 +91,8 @@ export class Overlay {
                     this._place();
             }, this._pill);
 
-        // Top chrome so the pill floats above windows; it must never eat input.
-        Main.layoutManager.addTopChrome(this._pill, {affectsInputRegion: false});
+        // Top chrome so the non-reactive pill floats above windows.
+        Main.layoutManager.addTopChrome(this._pill);
     }
 
     destroy() {

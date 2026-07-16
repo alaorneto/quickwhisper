@@ -2,6 +2,6 @@
   "uuid": "quickwhisper@alaorneto.github.io",
   "name": "QuickWhisper Overlay",
   "description": "Recording pill overlay and auto-paste for the QuickWhisper push-to-talk transcriber. Requires the quickwhisper daemon.",
-  "shell-version": ["45", "46", "47", "48", "49"],
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/alaorneto/quickwhisper"
 }
