@@ -13,6 +13,8 @@ use tracing::{debug, info, warn};
 use zbus::blocking::connection;
 use zbus::object_server::SignalEmitter;
 
+use crate::config::OverlayMonitor;
+
 pub const BUS_NAME: &str = "io.github.alaor.QuickWhisper";
 pub const OBJECT_PATH: &str = "/io/github/alaor/QuickWhisper";
 /// Exported by the extension; its presence means overlay + auto-paste work.
@@ -38,6 +40,12 @@ impl QuickWhisperIface {
     }
 
     #[zbus(signal)]
+    async fn overlay_monitor_mode(
+        emitter: &SignalEmitter<'_>,
+        mode: &str,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
     async fn recording_started(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     /// Normalized microphone RMS (0.0–1.0), ~15 Hz while recording.
@@ -61,6 +69,7 @@ struct Service {
     conn: zbus::blocking::Connection,
     emitter: SignalEmitter<'static>,
     state: Arc<Mutex<String>>,
+    overlay_monitor: OverlayMonitor,
 }
 
 /// Daemon-side handle. `None` inside means the session bus is unavailable —
@@ -70,8 +79,8 @@ pub struct DbusHandle(Option<Arc<Service>>);
 
 impl DbusHandle {
     /// `cancel_tx` receives a unit for each CancelRecording method call.
-    pub fn start(cancel_tx: Sender<()>) -> Self {
-        match Self::try_start(cancel_tx) {
+    pub fn start(cancel_tx: Sender<()>, overlay_monitor: OverlayMonitor) -> Self {
+        match Self::try_start(cancel_tx, overlay_monitor) {
             Ok(service) => DbusHandle(Some(Arc::new(service))),
             Err(e) => {
                 warn!("D-Bus indisponível ({e:#}); overlay/auto-paste desativados");
@@ -80,7 +89,7 @@ impl DbusHandle {
         }
     }
 
-    fn try_start(cancel_tx: Sender<()>) -> Result<Service> {
+    fn try_start(cancel_tx: Sender<()>, overlay_monitor: OverlayMonitor) -> Result<Service> {
         let state = Arc::new(Mutex::new("idle".to_owned()));
         let iface = QuickWhisperIface { state: Arc::clone(&state), cancel_tx };
         let conn = connection::Builder::session()?
@@ -92,7 +101,7 @@ impl DbusHandle {
             .object_server()
             .interface::<_, QuickWhisperIface>(OBJECT_PATH)?;
         let emitter = iface_ref.signal_emitter().clone();
-        Ok(Service { conn, emitter, state })
+        Ok(Service { conn, emitter, state, overlay_monitor })
     }
 
     fn set_state(&self, value: &str) {
@@ -110,6 +119,13 @@ impl DbusHandle {
     pub fn recording_started(&self) {
         self.set_state("recording");
         if let Some(s) = &self.0 {
+            self.emit(
+                "OverlayMonitorMode",
+                QuickWhisperIface::overlay_monitor_mode(
+                    &s.emitter,
+                    s.overlay_monitor.as_str(),
+                ),
+            );
             self.emit("RecordingStarted", QuickWhisperIface::recording_started(&s.emitter));
         }
     }

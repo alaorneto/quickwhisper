@@ -33,6 +33,7 @@ const MARGIN_BOTTOM = 64;
 
 const PURPLE = [0x7c, 0x3a, 0xed];
 const ORANGE = [0xf9, 0x73, 0x16];
+const MONITOR_MODES = new Set(['pointer', 'primary', 'all']);
 
 function barColor(i) {
     const t = i / (N_BARS - 1);
@@ -40,13 +41,11 @@ function barColor(i) {
     return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
 
-export class Overlay {
-    constructor() {
-        this._state = 'hidden'; // hidden | recording | processing
-        this._level = 0;        // smoothed mic level 0..1
-        this._target = 0;
-        this._phase = 0;
-        this._tick = 0;
+// One visual tree bound to one current monitor. It owns no logical state and
+// no timer; the Overlay controller drives every view from the same frame.
+class OverlayView {
+    constructor(monitor) {
+        this._monitor = monitor;
         this._scale = 1;
 
         // Plain St.Widgets (fixed layout): children sit exactly where
@@ -83,26 +82,21 @@ export class Overlay {
         }
         this._pill.add_child(this._waveBox);
 
-        this._layout();
-        St.ThemeContext.get_for_stage(global.stage).connectObject(
-            'notify::scale-factor', () => {
-                this._layout();
-                if (this._state !== 'hidden')
-                    this._place();
-            }, this._pill);
+        this.layout();
 
         // Top chrome so the non-reactive pill floats above windows.
         Main.layoutManager.addTopChrome(this._pill);
     }
 
     destroy() {
-        this._stopTick();
-        this._pill.destroy(); // also drops the scale-factor handler
+        this._pill.remove_all_transitions();
+        this._pill.destroy();
         this._pill = null;
+        this._bars = [];
     }
 
     // (Re)applies the full fixed geometry at the current UI scale.
-    _layout() {
+    layout() {
         const s = St.ThemeContext.get_for_stage(global.stage).scale_factor;
         this._scale = s;
         this._pill.set_size(PILL_W * s, PILL_H * s);
@@ -115,6 +109,71 @@ export class Overlay {
             bar.set_x(i * (BAR_WIDTH + BAR_SPACING) * s);
             this._setBarHeight(bar, BAR_MIN);
         });
+        this.place();
+    }
+
+    place() {
+        const monitor = this._monitor;
+        const s = this._scale;
+        this._pill.set_position(
+            monitor.x + Math.floor((monitor.width - PILL_W * s) / 2),
+            monitor.y + monitor.height - (PILL_H + MARGIN_BOTTOM) * s);
+    }
+
+    showRecording(animate) {
+        this._icon.opacity = 255;
+        this._spinner.opacity = 0;
+        this._pill.remove_all_transitions();
+        this._pill.show();
+        this.place();
+
+        if (animate) {
+            this._pill.opacity = 0;
+            this._pill.ease({
+                opacity: 255,
+                duration: 150,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        } else {
+            this._pill.opacity = 255;
+        }
+    }
+
+    showProcessing() {
+        this._icon.opacity = 0;
+        this._spinner.rotation_angle_z = 0;
+        this._spinner.opacity = 255;
+        this._pill.show();
+        this.place();
+    }
+
+    setSpinnerRotation(angle) {
+        this._spinner.rotation_angle_z = angle;
+    }
+
+    setBar(index, height, opacity) {
+        const bar = this._bars[index];
+        this._setBarHeight(bar, height);
+        bar.opacity = opacity;
+    }
+
+    dismiss(animate) {
+        this._pill.remove_all_transitions();
+        if (animate) {
+            this._pill.ease({
+                opacity: 0,
+                duration: 200,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => this._pill.hide(),
+            });
+        } else {
+            this._pill.hide();
+        }
+    }
+
+    hideNow() {
+        this._pill.remove_all_transitions();
+        this._pill.hide();
     }
 
     // Bars are vertically centered in the wave box; heights are in logical
@@ -125,50 +184,153 @@ export class Overlay {
         bar.set_size(BAR_WIDTH * s, hp);
         bar.set_y(Math.round((BAR_MAX * s - hp) / 2));
     }
+}
+
+export class Overlay {
+    constructor() {
+        this._state = 'hidden'; // hidden | recording | processing
+        this._level = 0;        // smoothed mic level 0..1
+        this._target = 0;
+        this._phase = 0;
+        this._tick = 0;
+        this._mode = 'pointer';
+        this._views = [];
+
+        this._themeContext = St.ThemeContext.get_for_stage(global.stage);
+        this._scaleChangedId = this._themeContext.connect(
+            'notify::scale-factor', () => this._onScaleChanged());
+        this._monitorsChangedId = Main.layoutManager.connect(
+            'monitors-changed', () => this._onMonitorsChanged());
+    }
+
+    destroy() {
+        this._stopTick();
+
+        if (this._scaleChangedId) {
+            this._themeContext.disconnect(this._scaleChangedId);
+            this._scaleChangedId = 0;
+        }
+        if (this._monitorsChangedId) {
+            Main.layoutManager.disconnect(this._monitorsChangedId);
+            this._monitorsChangedId = 0;
+        }
+
+        this._destroyViews();
+        this._themeContext = null;
+    }
 
     _animationsEnabled() {
         return St.Settings.get().enable_animations;
     }
 
-    // Bottom-center of the monitor the pointer is on (dictation follows focus,
-    // and focus usually follows the pointer).
-    _place() {
-        const [px, py] = global.get_pointer();
-        const monitor =
-            Main.layoutManager.monitors.find(
-                m => px >= m.x && px < m.x + m.width && py >= m.y && py < m.y + m.height) ??
-            Main.layoutManager.primaryMonitor;
-        const s = this._scale;
-        this._pill.set_position(
-            monitor.x + Math.floor((monitor.width - PILL_W * s) / 2),
-            monitor.y + monitor.height - (PILL_H + MARGIN_BOTTOM) * s);
+    _onScaleChanged() {
+        this._views.forEach(view => view.layout());
+
+        // layout() resets bar geometry. Reapply the current frame immediately;
+        // reduced motion has no tick that could repair it later.
+        if (this._state === 'recording') {
+            if (this._tick)
+                this._renderRecordingFrame();
+            else
+                this._renderReducedRecording();
+        } else if (this._state === 'processing') {
+            if (this._tick)
+                this._renderProcessingFrame();
+            else
+                this._renderReducedProcessing();
+        }
     }
 
-    showRecording() {
+    _normalizeMode(mode) {
+        return MONITOR_MODES.has(mode) ? mode : 'pointer';
+    }
+
+    _monitorsForMode() {
+        const monitors = Main.layoutManager.monitors;
+
+        if (this._mode === 'all')
+            return monitors;
+
+        if (this._mode === 'primary') {
+            const primary = Main.layoutManager.primaryMonitor ?? monitors[0];
+            return primary ? [primary] : [];
+        }
+
+        const [px, py] = global.get_pointer();
+        const pointerMonitor =
+            monitors.find(
+                monitor => px >= monitor.x &&
+                    px < monitor.x + monitor.width &&
+                    py >= monitor.y &&
+                    py < monitor.y + monitor.height) ??
+            Main.layoutManager.primaryMonitor ??
+            monitors[0];
+        return pointerMonitor ? [pointerMonitor] : [];
+    }
+
+    _destroyViews() {
+        this._views.forEach(view => view.destroy());
+        this._views = [];
+    }
+
+    _rebuildViews() {
+        const monitors = this._monitorsForMode();
+        this._destroyViews();
+        this._views = monitors.map(monitor => new OverlayView(monitor));
+    }
+
+    _onMonitorsChanged() {
+        // Monitor objects and indices are topology snapshots. Rebuild from the
+        // current list instead of trying to preserve identity across hotplug.
+        if (this._state === 'hidden')
+            return;
+
+        this._rebuildViews();
+        this._restoreVisibleState();
+    }
+
+    _restoreVisibleState() {
+        const animations = this._animationsEnabled();
+
+        if (this._state === 'recording') {
+            this._views.forEach(view => view.showRecording(false));
+            if (animations)
+                this._renderRecordingFrame();
+            else
+                this._renderReducedRecording();
+        } else if (this._state === 'processing') {
+            this._views.forEach(view => view.showProcessing());
+            if (animations)
+                this._renderProcessingFrame();
+            else
+                this._renderReducedProcessing();
+        }
+
+        if (animations)
+            this._startTick();
+        else
+            this._stopTick();
+    }
+
+    showRecording(mode = 'pointer') {
         this._state = 'recording';
         this._level = 0;
         this._target = 0;
-        this._icon.opacity = 255;
-        this._spinner.opacity = 0;
-        this._pill.remove_all_transitions();
-        this._pill.show();
-        this._place();
+        this._mode = this._normalizeMode(mode);
 
-        if (this._animationsEnabled()) {
-            this._pill.opacity = 0;
-            this._pill.ease({
-                opacity: 255,
-                duration: 150,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            });
+        // Rebuild for every recording: pointer mode follows the pointer's
+        // current monitor, while primary/all use the latest topology snapshot.
+        this._rebuildViews();
+
+        const animations = this._animationsEnabled();
+        this._views.forEach(view => view.showRecording(animations));
+        if (animations) {
+            this._renderRecordingFrame();
             this._startTick();
         } else {
             // Reduced motion: static pill, mid-height bars, no waveform.
-            this._pill.opacity = 255;
-            this._bars.forEach(b => {
-                this._setBarHeight(b, (BAR_MIN + BAR_MAX) / 2);
-                b.opacity = 255;
-            });
+            this._stopTick();
+            this._renderReducedRecording();
         }
     }
 
@@ -179,19 +341,17 @@ export class Overlay {
     showProcessing() {
         if (this._state === 'hidden')
             return;
+
         this._state = 'processing';
-        // Swap the mic icon for a spinner in the same slot: the pill geometry
-        // never changes, so the dots keep their exact place from the
-        // recording state. The spinner rotates from _onTick().
-        this._icon.opacity = 0;
-        this._spinner.rotation_angle_z = 0;
-        this._spinner.opacity = 255;
-        if (!this._animationsEnabled()) {
+        this._views.forEach(view => view.showProcessing());
+
+        if (this._animationsEnabled()) {
+            this._renderProcessingFrame();
+            this._startTick();
+        } else {
             // Reduced motion: static spinner glyph, dimmed dots.
-            this._bars.forEach(b => {
-                this._setBarHeight(b, BAR_MIN);
-                b.opacity = 160;
-            });
+            this._stopTick();
+            this._renderReducedProcessing();
         }
     }
 
@@ -203,26 +363,16 @@ export class Overlay {
         this.dismiss();
     }
 
-    // Fade the pill out from any state — used for Failed/Cancelled, which can
-    // arrive while still 'recording' (quick tap discarded by the daemon).
+    // Fade every view out from any state — used for Failed/Cancelled, which
+    // can arrive while still 'recording' (quick tap discarded by the daemon).
     dismiss() {
         if (this._state === 'hidden')
             return;
+
         this._state = 'hidden';
-        if (this._animationsEnabled()) {
-            this._pill.remove_all_transitions();
-            this._pill.ease({
-                opacity: 0,
-                duration: 200,
-                mode: Clutter.AnimationMode.EASE_IN_QUAD,
-                onComplete: () => {
-                    this._pill.hide();
-                    this._stopTick();
-                },
-            });
-        } else {
-            this._pill.hide();
-        }
+        this._stopTick();
+        const animate = this._animationsEnabled();
+        this._views.forEach(view => view.dismiss(animate));
     }
 
     // Immediate dismissal, no fade — used when the daemon vanishes from the
@@ -230,8 +380,7 @@ export class Overlay {
     hideNow() {
         this._state = 'hidden';
         this._stopTick();
-        this._pill.remove_all_transitions();
-        this._pill.hide();
+        this._views.forEach(view => view.hideNow());
     }
 
     _startTick() {
@@ -250,27 +399,49 @@ export class Overlay {
         }
     }
 
+    _renderRecordingFrame() {
+        for (let i = 0; i < N_BARS; i++) {
+            const sway =
+                0.35 + 0.65 * Math.abs(Math.sin(this._phase * 2.4 + i * 0.55));
+            const height =
+                BAR_MIN + (BAR_MAX - BAR_MIN) * this._level * sway;
+            this._views.forEach(view => view.setBar(i, height, 255));
+        }
+    }
+
+    _renderProcessingFrame() {
+        const rotation = (this._phase * 240) % 360;
+        this._views.forEach(view => view.setSpinnerRotation(rotation));
+        for (let i = 0; i < N_BARS; i++) {
+            const wave = 0.5 + 0.5 * Math.sin(this._phase * 4 - i * 0.45);
+            const opacity = Math.round(90 + 165 * wave);
+            this._views.forEach(view => view.setBar(i, BAR_MIN, opacity));
+        }
+    }
+
+    _renderReducedRecording() {
+        const height = (BAR_MIN + BAR_MAX) / 2;
+        for (let i = 0; i < N_BARS; i++)
+            this._views.forEach(view => view.setBar(i, height, 255));
+    }
+
+    _renderReducedProcessing() {
+        this._views.forEach(view => view.setSpinnerRotation(0));
+        for (let i = 0; i < N_BARS; i++)
+            this._views.forEach(view => view.setBar(i, BAR_MIN, 160));
+    }
+
     _onTick() {
         this._phase += TICK_MS / 1000;
         if (this._state === 'recording') {
             // Ease toward the daemon-reported level (~15 Hz) for fluid motion.
             this._level += (this._target - this._level) * 0.35;
-            for (let i = 0; i < N_BARS; i++) {
-                const sway = 0.35 + 0.65 * Math.abs(Math.sin(this._phase * 2.4 + i * 0.55));
-                const h = BAR_MIN + (BAR_MAX - BAR_MIN) * this._level * sway;
-                this._setBarHeight(this._bars[i], h);
-                this._bars[i].opacity = 255;
-            }
+            this._renderRecordingFrame();
         } else if (this._state === 'processing') {
             // Bars collapse to a line; a brightness wave travels through the
-            // gradient while whisper works, and the spinner turns in the
-            // mic icon's slot.
-            this._spinner.rotation_angle_z = (this._phase * 240) % 360;
-            for (let i = 0; i < N_BARS; i++) {
-                this._setBarHeight(this._bars[i], BAR_MIN);
-                const wave = 0.5 + 0.5 * Math.sin(this._phase * 4 - i * 0.45);
-                this._bars[i].opacity = Math.round(90 + 165 * wave);
-            }
+            // gradient while whisper works, and every spinner turns from the
+            // same controller phase.
+            this._renderProcessingFrame();
         }
     }
 }

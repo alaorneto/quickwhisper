@@ -9,6 +9,7 @@ pub struct Config {
     pub hotkey: HotkeyConfig,
     pub audio: AudioConfig,
     pub whisper: WhisperConfig,
+    pub overlay: OverlayConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,42 @@ pub struct WhisperConfig {
     pub model: String,
     /// "auto" for detection, or a fixed code like "pt"/"en".
     pub language: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OverlayMonitor {
+    #[default]
+    Pointer,
+    Primary,
+    All,
+}
+
+impl OverlayMonitor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pointer => "pointer",
+            Self::Primary => "primary",
+            Self::All => "all",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "pointer" => Ok(Self::Pointer),
+            "primary" => Ok(Self::Primary),
+            "all" => Ok(Self::All),
+            _ => anyhow::bail!(
+                "monitor inválido '{value}' (use pointer, primary ou all)"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct OverlayConfig {
+    pub monitor: OverlayMonitor,
 }
 
 impl Default for HotkeyConfig {
@@ -105,6 +142,7 @@ impl Config {
             "audio.max_recording_secs" => self.audio.max_recording_secs.to_string(),
             "whisper.model" => self.whisper.model.clone(),
             "whisper.language" => self.whisper.language.clone(),
+            "overlay.monitor" => self.overlay.monitor.as_str().into(),
             _ => unreachable!("canonical_key só retorna chaves conhecidas"),
         })
     }
@@ -138,6 +176,9 @@ impl Config {
                 );
                 self.whisper.language = value.to_owned();
             }
+            "overlay.monitor" => {
+                self.overlay.monitor = OverlayMonitor::parse(value)?;
+            }
             _ => unreachable!("canonical_key só retorna chaves conhecidas"),
         }
         Ok(())
@@ -153,8 +194,9 @@ fn canonical_key(key: &str) -> Result<&'static str> {
         "audio.max_recording_secs" | "max_recording_secs" => "audio.max_recording_secs",
         "whisper.model" | "model" => "whisper.model",
         "whisper.language" | "language" | "lang" => "whisper.language",
+        "overlay.monitor" | "monitor" => "overlay.monitor",
         _ => anyhow::bail!(
-            "chave desconhecida '{key}'. Válidas: key, mode, device, max_recording_secs, model, language"
+            "chave desconhecida '{key}'. Válidas: key, mode, device, max_recording_secs, model, language, monitor"
         ),
     })
 }
@@ -174,4 +216,79 @@ pub fn history_db_path() -> Result<PathBuf> {
 fn project_dirs() -> Result<directories::ProjectDirs> {
     directories::ProjectDirs::from("", "", "quickwhisper")
         .context("não foi possível resolver os diretórios do usuário (HOME ausente?)")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LEGACY_CONFIG: &str = r#"
+[hotkey]
+key = "F12"
+mode = "push-to-talk"
+
+[audio]
+device = "default"
+max_recording_secs = 120
+
+[whisper]
+model = "small"
+language = "pt"
+"#;
+
+    #[test]
+    fn legacy_config_defaults_overlay_monitor_to_pointer() {
+        let cfg: Config = toml::from_str(LEGACY_CONFIG).expect("config antiga deve ser válida");
+
+        assert_eq!(cfg.overlay.monitor, OverlayMonitor::Pointer);
+    }
+
+    #[test]
+    fn overlay_monitor_accepts_supported_values() {
+        for (raw, expected) in [
+            ("pointer", OverlayMonitor::Pointer),
+            ("primary", OverlayMonitor::Primary),
+            ("all", OverlayMonitor::All),
+        ] {
+            let body = format!("[overlay]\nmonitor = \"{raw}\"\n");
+            let cfg: Config = toml::from_str(&body).expect("modo suportado deve ser válido");
+
+            assert_eq!(cfg.overlay.monitor, expected);
+        }
+    }
+
+    #[test]
+    fn overlay_monitor_rejects_unknown_toml_value() {
+        let result = toml::from_str::<Config>("[overlay]\nmonitor = \"primay\"\n");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_get_and_set_overlay_monitor() {
+        let mut cfg = Config::default();
+
+        assert_eq!(cfg.get_by_key("overlay.monitor").unwrap(), "pointer");
+
+        cfg.set_by_key("monitor", "all").unwrap();
+
+        assert_eq!(cfg.overlay.monitor, OverlayMonitor::All);
+        assert_eq!(cfg.get_by_key("monitor").unwrap(), "all");
+
+        let error = cfg.set_by_key("overlay.monitor", "primay").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("monitor inválido 'primay' (use pointer, primary ou all)")
+        );
+    }
+
+    #[test]
+    fn default_config_serializes_overlay_section() {
+        let body = toml::to_string_pretty(&Config::default())
+            .expect("config padrão deve ser serializável");
+
+        assert!(body.contains("[overlay]"));
+        assert!(body.contains("monitor = \"pointer\""));
+    }
 }
