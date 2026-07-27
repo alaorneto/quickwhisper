@@ -19,11 +19,13 @@ const OVERLAY_BUS_NAME = 'io.github.alaor.QuickWhisper.Overlay';
 // Delay between Finished and Ctrl+V: lets the fresh clipboard selection
 // propagate and any lingering key state settle.
 const PASTE_DELAY_MS = 120;
+const MONITOR_MODES = new Set(['pointer', 'primary', 'all']);
 
 export default class QuickWhisperExtension extends Extension {
     enable() {
         this._overlay = new Overlay();
         this._pasteTimeout = 0;
+        this._pendingMonitor = null;
 
         const seat = Clutter.get_default_backend().get_default_seat();
         this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
@@ -32,14 +34,17 @@ export default class QuickWhisperExtension extends Extension {
             OVERLAY_BUS_NAME, Gio.BusNameOwnerFlags.NONE, null, null);
 
         this._signalId = Gio.DBus.session.signal_subscribe(
-            null, BUS_NAME, null, OBJECT_PATH, null,
+            BUS_NAME, BUS_NAME, null, OBJECT_PATH, null,
             Gio.DBusSignalFlags.NONE, (...args) => this._onSignal(...args));
 
         // If the daemon crashes mid-dictation no terminal signal ever comes;
         // dismiss the pill as soon as its bus name vanishes.
         this._watchId = Gio.bus_watch_name(
             Gio.BusType.SESSION, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
-            null, () => this._overlay?.hideNow());
+            null, () => {
+                this._pendingMonitor = null;
+                this._overlay?.hideNow();
+            });
     }
 
     disable() {
@@ -59,16 +64,29 @@ export default class QuickWhisperExtension extends Extension {
             GLib.source_remove(this._pasteTimeout);
             this._pasteTimeout = 0;
         }
+        this._pendingMonitor = null;
         this._keyboard = null;
         this._overlay?.destroy();
         this._overlay = null;
     }
 
-    _onSignal(_conn, _sender, _path, _iface, signal, params) {
+    _onSignal(_conn, sender, _path, _iface, signal, params) {
         switch (signal) {
-        case 'RecordingStarted':
-            this._overlay.showRecording();
+        case 'OverlayMonitorMode': {
+            const mode = params.get_child_value(0).get_string()[0];
+            this._pendingMonitor = MONITOR_MODES.has(mode)
+                ? {sender, mode}
+                : null;
             break;
+        }
+        case 'RecordingStarted': {
+            const mode = this._pendingMonitor?.sender === sender
+                ? this._pendingMonitor.mode
+                : 'pointer';
+            this._pendingMonitor = null;
+            this._overlay.showRecording(mode);
+            break;
+        }
         case 'AudioLevel':
             this._overlay.setLevel(params.get_child_value(0).get_double());
             break;
