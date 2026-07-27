@@ -42,7 +42,7 @@ pub fn run(cfg: Config) -> Result<()> {
     // D-Bus service for the GNOME Shell extension (overlay + auto-paste);
     // the daemon works fine without it (headless fallback).
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
-    let dbus = DbusHandle::start(cancel_tx);
+    let dbus = DbusHandle::start(cancel_tx, cfg.overlay.monitor);
     // Fresh installs ship the extension present but never enabled; asking the
     // Shell here makes overlay + auto-paste work with zero manual steps.
     if !dbus.overlay_present() {
