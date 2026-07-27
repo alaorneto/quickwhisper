@@ -94,7 +94,7 @@ enum HistoryCommand {
 enum ConfigCommand {
     /// Print the whole configuration
     Show,
-    /// Print one value (keys: key, mode, device, max_recording_secs, model, language)
+    /// Print one value (keys: key, mode, device, max_recording_secs, model, language, monitor)
     Get { key: String },
     /// Change one value, e.g.: `config set language pt` or `config set language auto`
     Set { key: String, value: String },
